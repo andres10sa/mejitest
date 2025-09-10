@@ -1,0 +1,14 @@
+
+body {
+  margin: 0;
+ box-sizing: border-box;
+ font-family: 'poppins';
+ padding: 30px;
+
+}
+
+#root{
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
