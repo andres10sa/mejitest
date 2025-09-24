@@ -133,6 +133,10 @@
         font-size: 14px;
       }
 
+      .iu-meta{
+        display: none;
+      }
+
   }
 
   /* image-input.css */
@@ -270,6 +274,8 @@
   color: #475569;
   font-size: 13px;
 }
+
+.iu-me:m
 
 .iu-filename {
   max-width: 180px;
