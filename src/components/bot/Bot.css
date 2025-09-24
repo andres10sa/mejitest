@@ -134,7 +134,7 @@
       }
 
       .iu-meta{
-        display: none;
+        display: none !important;
       }
 
   }
