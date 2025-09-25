@@ -129,38 +129,78 @@ export const Bot = () => {
     setLoading(true);
 
     try {
-      const resizeImageFile = (inputFile, maxWidth = 1200, quality = 0.75) =>
+      const maxBytes = 700 * 1024; // objetivo seguro para Hugging Face router (ajuste si necesita)
+      const toImage = (file) =>
         new Promise((resolve, reject) => {
-          if (!inputFile || !inputFile.type.startsWith("image/"))
-            return reject(new Error("no image"));
           const img = new Image();
           img.onerror = () => reject(new Error("load error"));
-          img.onload = () => {
-            const scale = Math.min(1, maxWidth / img.width);
-            const w = Math.round(img.width * scale);
-            const h = Math.round(img.height * scale);
-            const canvas = document.createElement("canvas");
-            canvas.width = w;
-            canvas.height = h;
-            const ctx = canvas.getContext("2d");
-            ctx.drawImage(img, 0, 0, w, h);
-            canvas.toBlob(
-              (blob) => {
-                if (!blob) return reject(new Error("no blob"));
-                const outFile = new File(
-                  [blob],
-                  inputFile.name.replace(/\.\w+$/, ".jpg"),
-                  { type: "image/jpeg" }
-                );
-                resolve(outFile);
-              },
-              "image/jpeg",
-              quality
-            );
-          };
-          const url = URL.createObjectURL(inputFile);
-          img.src = url;
+          img.onload = () => resolve(img);
+          img.src = URL.createObjectURL(file);
         });
+
+      const fileFromBlob = (blob, name) =>
+        new File([blob], name.replace(/\.\w+$/, ".jpg"), {
+          type: "image/jpeg",
+        });
+
+      const canvasBlob = (img, width, height, quality) =>
+        new Promise((resolve) => {
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, width, height);
+          canvas.toBlob((b) => resolve(b), "image/jpeg", quality);
+        });
+
+      const compressUntilUnder = async (inputFile, targetBytes) => {
+        let img = await toImage(inputFile);
+        let w = img.width;
+        let h = img.height;
+        let quality = 0.85;
+        let scale = Math.min(1, 1200 / w);
+        w = Math.round(w * scale);
+        h = Math.round(h * scale);
+
+        for (let i = 0; i < 8; i++) {
+          const blob = await canvasBlob(img, w, h, quality);
+          if (blob && blob.size <= targetBytes)
+            return fileFromBlob(blob, inputFile.name);
+          // reducir calidad y tamaño progresivamente
+          quality = Math.max(0.35, quality - 0.12);
+          w = Math.round(w * 0.85);
+          h = Math.round(h * 0.85);
+        }
+        // último intento: máxima compresión con tamaño pequeño
+        const finalBlob = await canvasBlob(
+          img,
+          800,
+          Math.round((800 / img.width) * img.height),
+          0.35
+        );
+        return fileFromBlob(finalBlob, inputFile.name);
+      };
+
+      let fileToSend = file;
+      if (file.size > maxBytes) {
+        try {
+          fileToSend = await compressUntilUnder(file, maxBytes);
+        } catch (err) {
+          fileToSend = file;
+        }
+      }
+
+      if (fileToSend.size > 2 * maxBytes) {
+        setLoading(false);
+        setResponse(
+          `Imagen demasiado grande aun tras compresión (${(
+            fileToSend.size /
+            1024 /
+            1024
+          ).toFixed(2)} MB). Elija otra imagen o reduzca calidad en cámara.`
+        );
+        return;
+      }
 
       const fileToDataUrl = (f) =>
         new Promise((resolve, reject) => {
@@ -169,29 +209,6 @@ export const Bot = () => {
           reader.onload = () => resolve(reader.result);
           reader.readAsDataURL(f);
         });
-
-      const MAX_ALLOWED_MB = 5;
-      const maxBytes = MAX_ALLOWED_MB * 1024 * 1024;
-
-      let fileToSend = file;
-      if (file.size > 700 * 1024) {
-        try {
-          const resized = await resizeImageFile(file, 1200, 0.75);
-          if (resized.size < file.size) fileToSend = resized;
-        } catch (err) {
-          fileToSend = file;
-        }
-      }
-
-      if (fileToSend.size > maxBytes) {
-        setLoading(false);
-        setResponse(
-          `Imagen demasiado grande (${(fileToSend.size / 1024 / 1024).toFixed(
-            2
-          )} MB). Reduzca el tamaño.`
-        );
-        return;
-      }
 
       const imageUrl = await fileToDataUrl(fileToSend);
 
@@ -231,21 +248,26 @@ export const Bot = () => {
         }
       );
 
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`${res.status} ${errText}`);
+      }
+
       const data = await res.json();
       setResponse(data?.choices?.[0]?.message?.content ?? JSON.stringify(data));
     } catch (err) {
       console.log("Error con la IA multimodal", err);
       setResponse("Error: " + (err.message || "falló la petición"));
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   };
 
   return (
     <div className="bot">
       <header className="header">
         <h1>Asistente mejIA</h1>
-        <p>Sube una imagen e indica lo que quieres que analice. </p>
+        <p>Sube una imagen e indica lo que quieres que analice </p>
       </header>
       <form onSubmit={handleSubmit} className="form">
         <textarea
