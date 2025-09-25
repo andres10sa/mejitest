@@ -150,44 +150,70 @@
 //     </div>
 //   );
 // };
-import React, { useRef, useState } from "react";
+import React, { useRef, useState, useEffect } from "react";
 
 export const ImageUpload = ({ file, setFile }) => {
   const ref = useRef();
   const [preview, setPreview] = useState(null);
   const [dragOver, setDragOver] = useState(false);
+  const TARGET_BYTES = 700 * 1024;
+
+  useEffect(() => {
+    return () => {
+      if (preview) URL.revokeObjectURL(preview);
+    };
+  }, [preview]);
 
   const handleSelectClick = () => ref.current?.click();
 
-  const resizeImageFile = (fileToResize, maxWidth = 1200, quality = 0.8) =>
+  const toImage = (f) =>
     new Promise((resolve, reject) => {
-      if (!fileToResize || !fileToResize.type.startsWith("image/")) return reject(new Error("No es imagen"));
       const img = new Image();
-      img.onerror = () => reject(new Error("Error cargando imagen"));
-      img.onload = () => {
-        const scale = Math.min(1, maxWidth / img.width);
-        const w = Math.round(img.width * scale);
-        const h = Math.round(img.height * scale);
-        const canvas = document.createElement("canvas");
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, w, h);
-        canvas.toBlob(
-          (blob) => {
-            if (!blob) return reject(new Error("No blob"));
-            const outFile = new File([blob], fileToResize.name.replace(/\.\w+$/, ".jpg"), { type: "image/jpeg" });
-            resolve(outFile);
-          },
-          "image/jpeg",
-          quality
-        );
-      };
-      const url = URL.createObjectURL(fileToResize);
-      img.src = url;
+      img.onerror = () => reject(new Error("load error"));
+      img.onload = () => resolve(img);
+      img.src = URL.createObjectURL(f);
     });
 
-  const readFile = (f) => {
+  const canvasBlob = (img, width, height, quality) =>
+    new Promise((resolve) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, width, height);
+      canvas.toBlob((b) => resolve(b), "image/jpeg", quality);
+    });
+
+  const fileFromBlob = (blob, name) =>
+    new File([blob], name.replace(/\.\w+$/, ".jpg"), { type: "image/jpeg" });
+
+  const compressUntilUnder = async (inputFile, targetBytes = TARGET_BYTES) => {
+    if (!inputFile || !inputFile.type?.startsWith?.("image/")) throw new Error("no image");
+    try {
+      const img = await toImage(inputFile);
+      let w = img.width;
+      let h = img.height;
+      let quality = 0.9;
+      let scale = Math.min(1, 1200 / w);
+      w = Math.round(w * scale);
+      h = Math.round(h * scale);
+
+      for (let i = 0; i < 8; i++) {
+        const blob = await canvasBlob(img, w, h, quality);
+        if (blob && blob.size <= targetBytes) return fileFromBlob(blob, inputFile.name);
+        quality = Math.max(0.35, quality - 0.12);
+        w = Math.round(w * 0.85);
+        h = Math.round(h * 0.85);
+      }
+
+      const finalBlob = await canvasBlob(img, 800, Math.round((800 / img.width) * img.height), 0.35);
+      return fileFromBlob(finalBlob, inputFile.name);
+    } catch {
+      return inputFile;
+    }
+  };
+
+  const setPreviewAndFile = (f) => {
     if (!f) return;
     const url = URL.createObjectURL(f);
     if (preview) URL.revokeObjectURL(preview);
@@ -195,22 +221,26 @@ export const ImageUpload = ({ file, setFile }) => {
     setFile(f);
   };
 
+  const readFile = (f) => {
+    if (!f) return;
+    setPreviewAndFile(f);
+  };
+
   const handleFile = async (f) => {
+    if (!f) return;
+    if (!f.type.startsWith("image/")) return;
     try {
-      if (!f) return;
-      if (!f.type.startsWith("image/")) return;
-      const sizeKB = f.size / 1024;
-      if (sizeKB < 700) {
+      if (f.size <= TARGET_BYTES) {
         readFile(f);
         return;
       }
-      const resized = await resizeImageFile(f, 1200, 0.75);
-      if (resized.size >= f.size) {
-        readFile(f);
+      const compressed = await compressUntilUnder(f, TARGET_BYTES);
+      if (compressed && compressed.size <= f.size) {
+        readFile(compressed);
       } else {
-        readFile(resized);
+        readFile(f);
       }
-    } catch (err) {
+    } catch {
       readFile(f);
     }
   };
@@ -245,7 +275,10 @@ export const ImageUpload = ({ file, setFile }) => {
         onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && handleSelectClick()}
         role="button"
         tabIndex={0}
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
         onDragLeave={() => setDragOver(false)}
         onDrop={handleDrop}
         aria-label="Subir imagen"
