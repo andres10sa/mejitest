@@ -63,6 +63,7 @@ export const Bot = () => {
       );
 
       const data = await res.json();
+      console.log("LA DAT", data);
       setResponse(data?.choices?.[0]?.message?.content ?? JSON.stringify(data));
     } catch (err) {
       console.log("Error con la IA multimodal", err);
