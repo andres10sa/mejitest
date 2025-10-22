@@ -286,9 +286,7 @@ console.log(response)
         ref={responseRef}
       >
         {response ? <Audio text={response} /> : null}
-        <br />
-        {response ? "si hay" : "no hay"}
-        <Audio text={response} />
+        br
         {response}
       </div>
     </div>
