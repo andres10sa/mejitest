@@ -323,7 +323,7 @@ export const Bot = () => {
 
   const announce = (msg) => {
     try {
-      if (liveRef.current) liveRef.textContent = msg;
+      if (liveRef.current) liveRef.current.textContent = msg;
     } catch {}
   };
 
@@ -344,33 +344,23 @@ export const Bot = () => {
       c.width = w;
       c.height = h;
       const ctx = c.getContext("2d");
-      // Dibuja la imagen en el lienzo
       ctx.drawImage(imgBitmap, 0, 0, w, h);
-      // Intenta usar JPEG para mejor compresión para fotos
       c.toBlob((b) => res(b), "image/jpeg", quality);
     });
 
-  const fileFromBlob = (blob, origName) =>
-    new File([blob], origName.replace(/\.\w+$/, ".jpg"), {
-      type: "image/jpeg",
-    });
+  const fileFromBlob = (blob, origName) => new File([blob], origName.replace(/\.\w+$/, ".jpg"), { type: "image/jpeg" });
 
   // calcula bytes reales desde dataURL base64
   const dataUrlBytes = (dataUrl) => {
     const parts = String(dataUrl).split(",");
     if (!parts[1]) return 0;
     const b64 = parts[1];
-    // Estimación: Base64 es aproximadamente 4/3 del tamaño binario (bytes reales)
     return Math.ceil((b64.length * 3) / 4);
   };
 
-  /**
-   * Modificación: targets más agresivos. Se agregó 100KB y 50KB para máxima compatibilidad.
-   */
-  const tryCompressProgressive = async (
-    file,
-    targets = [500 * 1024, 300 * 1024, 150 * 1024, 100 * 1024, 50 * 1024] // AGRESIVO
-  ) => {
+  // intenta compresión iterativa con varias configuraciones
+  const tryCompressProgressive = async (file, targets = [500 * 1024, 300 * 1024, 150 * 1024]) => {
+    // si no hay createImageBitmap (antiguos browsers), devolvemos el archivo original
     try {
       const bitmap = await createImageBitmap(file);
       // combos de dimensiones a intentar (maxDim)
@@ -379,10 +369,7 @@ export const Bot = () => {
         const target = targets[t];
         for (let d = 0; d < dims.length; d++) {
           let maxDim = dims[d];
-          const scale = Math.min(
-            1,
-            maxDim / Math.max(bitmap.width, bitmap.height)
-          );
+          const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
           let w = Math.max(200, Math.round(bitmap.width * scale));
           let h = Math.max(200, Math.round(bitmap.height * scale));
           let quality = 0.85;
@@ -392,7 +379,7 @@ export const Bot = () => {
             if (blob && blob.size <= target) {
               return fileFromBlob(blob, file.name);
             }
-            // reducir calidad y tamaño progresivamente
+            // reducir calidad y tamaño
             quality = Math.max(0.25, quality - 0.15);
             w = Math.max(200, Math.round(w * 0.85));
             h = Math.max(200, Math.round(h * 0.85));
@@ -401,19 +388,10 @@ export const Bot = () => {
         }
       }
       // último intento: tamaño pequeño agresivo
-      const finalBlob = await canvasToBlob(
-        bitmap,
-        420,
-        Math.round((420 / bitmap.width) * bitmap.height),
-        0.25
-      );
+      const finalBlob = await canvasToBlob(bitmap, 420, Math.round((420 / bitmap.width) * bitmap.height), 0.25);
       return fileFromBlob(finalBlob, file.name);
     } catch (err) {
       // si falla el procesamiento (e.g. HEIC en algunos browsers), fallback al archivo original
-      console.error(
-        "Fallo en tryCompressProgressive, devolviendo original:",
-        err
-      );
       return file;
     }
   };
@@ -444,19 +422,17 @@ export const Bot = () => {
     try {
       // 1) intentar comprimir progresivamente (targets en bytes de archivo, antes de base64).
       // Nota: base64 crece ~33% respecto a bytes del archivo, por eso tenemos targets agresivos.
-      const compressed = await tryCompressProgressive(file);
+      const compressed = await tryCompressProgressive(file, [500 * 1024, 300 * 1024, 150 * 1024]);
 
       // 2) convertir a dataURL y medir tamaño real del base64
       const imageUrl = await fileToDataUrl(compressed);
       const bytes = dataUrlBytes(imageUrl);
 
-      // 3) umbral seguro: si dataURL > 2 MB -> probablemente dará 413 en router, mejor avisar
-      // MODIFICADO: Límite de seguridad aumentado a 2 MB de Base64.
-      const SAFE_DATAURL_LIMIT = 2_000 * 1024; // 2.0 MB
+      // 3) umbral seguro: si dataURL > 1.2 MB -> probablemente dará 413 en router, mejor avisar
+      const SAFE_DATAURL_LIMIT = 1_200 * 1024; // 1.2 MB
       if (bytes > SAFE_DATAURL_LIMIT) {
         const msg =
-          "La imagen sigue siendo demasiado grande para enviarla. " +
-          "El límite de seguridad del servidor es estricto. " +
+          "La imagen sigue siendo demasiado grande para enviarla desde este móvil. " +
           "Pruebe con una foto de menor resolución o reduzca la calidad en la cámara.";
         setResponse(msg);
         announce(msg);
@@ -489,17 +465,14 @@ export const Bot = () => {
       };
 
       // 5) enviar
-      const res = await fetch(
-        "https://router.huggingface.co/v1/chat/completions",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${import.meta.env.VITE_HF_TOKEN}`,
-          },
-          body: JSON.stringify(payload),
-        }
-      );
+      const res = await fetch("https://router.huggingface.co/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${import.meta.env.VITE_HF_TOKEN}`,
+        },
+        body: JSON.stringify(payload),
+      });
 
       if (!res.ok) {
         // si el servidor responde 413 pese a todo, lo informamos y damos alternativas
@@ -516,8 +489,7 @@ export const Bot = () => {
       }
 
       const data = await res.json();
-      const textResp =
-        data?.choices?.[0]?.message?.content ?? JSON.stringify(data);
+      const textResp = data?.choices?.[0]?.message?.content ?? JSON.stringify(data);
       setResponse(textResp);
 
       // foco + anuncio
@@ -539,172 +511,6 @@ export const Bot = () => {
 
   return (
     <div className="bot" role="application" aria-label="Asistente mejIA">
-      {/* --- ESTILOS INLINE (Reemplaza import "./Bot.css") --- */}
-      <style>{`
-        .bot {
-            padding: 1rem;
-            max-width: 500px;
-            margin: 0 auto;
-            background-color: #f7f7f7;
-            min-height: 100vh;
-            font-family: sans-serif;
-            border-radius: 12px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-        }
-        .header {
-            text-align: center;
-            margin-bottom: 1.5rem;
-            background-color: white;
-            padding: 1.5rem;
-            border-radius: 12px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-        }
-        .header h1 {
-            font-size: 1.8rem;
-            font-weight: bold;
-            color: #4f46e5;
-        }
-        .header p {
-            color: #6b7280;
-            margin-top: 0.5rem;
-        }
-        .form {
-            display: flex;
-            flex-direction: column;
-            gap: 1rem;
-        }
-        .iu-controls {
-            display: flex;
-            flex-direction: column;
-            gap: 1rem;
-        }
-        @media (min-width: 768px) {
-            .iu-controls {
-                flex-direction: row;
-            }
-        }
-        .button {
-            padding: 0.75rem 1.5rem;
-            border-radius: 0.75rem;
-            font-weight: bold;
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            background-color: #4f46e5;
-            color: white;
-            cursor: pointer;
-            width: 100%; /* Asegura que el botón ocupe todo el espacio en móviles */
-        }
-        .button:not([disabled]):hover {
-            background-color: #4338ca;
-            transform: scale(1.02);
-        }
-        .button[disabled] {
-            background-color: #9ca3af;
-            cursor: not-allowed;
-        }
-        .spinner-container {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 2rem;
-            text-align: center;
-            color: #4f46e5;
-        }
-        .spinner {
-            border: 4px solid rgba(0, 0, 0, 0.1);
-            border-top: 4px solid #4f46e5;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        .response-box {
-            background-color: white;
-            padding: 1.5rem;
-            border-radius: 12px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-            border-top: 4px solid #4f46e5;
-            min-height: 100px;
-        }
-
-        /* Estilos para ImageUpload */
-        .image-upload-container {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 1rem;
-            border: 2px dashed #a5b4fc; /* indigo-300 */
-            border-radius: 0.75rem;
-            width: 100%;
-            background-color: white;
-            box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.05);
-        }
-        .hidden-input {
-            display: none;
-        }
-        .upload-label {
-            cursor: pointer;
-            color: #4f46e5; /* indigo-600 */
-            font-weight: bold;
-            transition: all 0.15s;
-            padding: 0.5rem 1rem;
-            border-radius: 0.5rem;
-            background-color: #eef2ff; /* indigo-50 */
-        }
-        .upload-label:hover {
-            color: #3730a3; /* indigo-800 */
-            background-color: #e0e7ff; /* indigo-100 */
-        }
-        .preview-container {
-            margin-top: 1rem;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            width: 100%;
-        }
-        .image-preview {
-            max-height: 12rem; /* 48 */
-            object-fit: contain;
-            border-radius: 0.5rem;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            margin-bottom: 0.75rem;
-            border: 1px solid #e5e7eb;
-        }
-        .file-info {
-            font-size: 0.875rem;
-            color: #374151; /* gray-700 */
-            max-width: 100%;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            padding: 0 0.5rem;
-        }
-        .clear-button {
-            margin-top: 0.5rem;
-            color: #dc2626; /* red-600 */
-            font-size: 0.875rem;
-            font-weight: 500;
-            transition: all 0.15s;
-            background: none;
-            border: none;
-            cursor: pointer;
-        }
-        .clear-button:hover {
-            color: #991b1b; /* red-800 */
-        }
-        .format-info {
-            font-size: 0.875rem;
-            color: #9ca3af; /* gray-400 */
-            margin-top: 0.5rem;
-        }
-      `}</style>
-
       <header className="header" role="banner">
         <h1>Asistente mejIA</h1>
         <p>Sube una imagen e indica lo que quieres que analice</p>
@@ -728,7 +534,7 @@ export const Bot = () => {
           />
           <button
             ref={submitBtnRef}
-            disabled={!file || loading}
+            disabled={!file}
             className="button"
             type="submit"
             aria-label={loading ? "Enviando a la IA" : "Analizar imagen"}
@@ -772,11 +578,8 @@ export const Bot = () => {
       >
         {response ? <Audio text={response} /> : null}
         <br />
-        {response ? (
-          <p className="whitespace-pre-wrap">{response}</p>
-        ) : (
-          "no hay"
-        )}
+        {response ? "si hay" : "no hay"}
+        <Audio text={response} />
       </div>
     </div>
   );
