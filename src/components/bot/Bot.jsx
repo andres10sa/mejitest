@@ -576,6 +576,8 @@ export const Bot = () => {
         ref={responseRef}
       >
         {response ? <Audio text={response} /> : null}
+        <br />
+        {response}
       </div>
     </div>
   );
