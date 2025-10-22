@@ -1,5 +1,3 @@
-
-
 import React, { useRef, useState, useEffect } from "react";
 import { ImageUpload } from "./ImageUpload";
 import { Audio } from "./Audio";
@@ -47,7 +45,10 @@ export const Bot = () => {
       c.toBlob((b) => res(b), "image/jpeg", quality);
     });
 
-  const fileFromBlob = (blob, origName) => new File([blob], origName.replace(/\.\w+$/, ".jpg"), { type: "image/jpeg" });
+  const fileFromBlob = (blob, origName) =>
+    new File([blob], origName.replace(/\.\w+$/, ".jpg"), {
+      type: "image/jpeg",
+    });
 
   // calcula bytes reales desde dataURL base64
   const dataUrlBytes = (dataUrl) => {
@@ -58,105 +59,56 @@ export const Bot = () => {
   };
 
   // reemplaza tu tryCompressProgressive por esta versión
-const tryCompressProgressive = async (file, targets = [500 * 1024, 300 * 1024, 150 * 1024]) => {
-  try {
-    // obtener bitmap o fallback a Image element (compatible con HEIC fallback)
-    let bitmap;
-    try {
-      bitmap = await createImageBitmap(file);
-    } catch {
-      const url = URL.createObjectURL(file);
-      bitmap = await new Promise((res, rej) => {
-        const img = new Image();
-        img.onload = () => {
-          URL.revokeObjectURL(url);
-          res(img);
-        };
-        img.onerror = (e) => {
-          URL.revokeObjectURL(url);
-          rej(e);
-        };
-        img.src = url;
-      });
+  const tryCompressProgressive = async (
+    file,
+    targets = [500 * 1024, 300 * 1024, 150 * 1024]
+  ) => {
+    const img = new Image();
+    const objectURL = URL.createObjectURL(file);
+    await new Promise((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = reject;
+      img.src = objectURL;
+    });
+    URL.revokeObjectURL(objectURL);
+
+    // Definir ancho máximo y escalar si es necesario (mantener aspecto)
+    const MAX_WIDTH = 300;
+    let { width, height } = img;
+    if (width > MAX_WIDTH) {
+      height = Math.round(height * (MAX_WIDTH / width));
+      width = MAX_WIDTH;
     }
 
-    const srcW = bitmap.width;
-    const srcH = bitmap.height;
+    // Crear canvas con las dimensiones escaladas
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img, 0, 0, width, height);
 
-    // dimensiones y estrategia más agresiva (incluye tamaños muy pequeños)
-    const dims = [1200, 1000, 800, 600, 480, 360, 240, 160];
-    // rangos de calidad inicial (empezar alto, bajar muy agresivo)
-    const initialQualities = [0.92, 0.85, 0.75];
+    // Determinar formato (preferir WebP si está soportado)
+    // Al usar aQuality=0.8 para probar si retorna WebP; si no, se usará JPEG.
+    const mimeType = canvas
+      .toDataURL("image/webp", 0.8)
+      .startsWith("data:image/webp")
+      ? "image/webp"
+      : "image/jpeg";
 
-    for (let t = 0; t < targets.length; t++) {
-      const target = targets[t];
-
-      for (let d = 0; d < dims.length; d++) {
-        const maxDim = dims[d];
-        const scale = Math.min(1, maxDim / Math.max(srcW, srcH));
-        // w/h iniciales para esta dimensión
-        let w = Math.max(120, Math.round(srcW * scale));
-        let h = Math.max(90, Math.round(srcH * scale));
-
-        for (let qStart = 0; qStart < initialQualities.length; qStart++) {
-          let quality = initialQualities[qStart];
-
-          // varios pasos: reducimos calidad y tamaño en cada iteración
-          for (let step = 0; step < 9; step++) {
-            try {
-              const blob = await canvasToBlob(bitmap, w, h, quality);
-              if (blob && blob.size > 0 && blob.size <= target) {
-                return fileFromBlob(blob, file.name);
-              }
-            } catch (err) {
-              // si canvas falla, seguimos intentando con otras combinaciones
-            }
-
-            // bajar calidad y reducir dimensiones agresivamente
-            quality = Math.max(0.05, quality - 0.12);
-            w = Math.max(100, Math.round(w * 0.80));
-            h = Math.max(80, Math.round(h * 0.80));
-          }
-        }
-      }
+    // Iterar sobre niveles de calidad decrecientes hasta <100KB
+    let quality = 0.8;
+    let blob = await new Promise((res) =>
+      canvas.toBlob(res, mimeType, quality)
+    );
+    // Loop: si es muy grande, disminuir calidad
+    while (blob.size > 100 * 1024 && quality > 0.1) {
+      quality = Math.max(quality - 0.1, 0.1);
+      // Generar nuevo Blob con menor calidad
+      blob = await new Promise((res) => canvas.toBlob(res, mimeType, quality));
     }
 
-    // Intentos finales ultra-agresivos: probar varios tamaños fijos muy pequeños y calidades mínimas
-    const finalSizes = [420, 360, 320, 240, 200, 160];
-    for (let size of finalSizes) {
-      const scale = Math.min(1, size / Math.max(srcW, srcH));
-      const w = Math.max(120, Math.round(srcW * scale));
-      const h = Math.max(80, Math.round(srcH * scale));
-      // probamos calidades bajísimas
-      for (let q = 0.06; q >= 0.03; q -= 0.01) {
-        try {
-          const blob = await canvasToBlob(bitmap, w, h, q);
-          if (blob && blob.size > 0) {
-            // si quedó razonablemente pequeño lo devolvemos (umbral levemente superior al objetivo más pequeño)
-            if (blob.size <= (targets[targets.length - 1] || 150 * 1024) * 2) {
-              return fileFromBlob(blob, file.name);
-            }
-          }
-        } catch {}
-      }
-    }
-
-    // si todo falla, devolver intento extremo final en 120px ancho (calidad mínima)
-    try {
-      const verySmallW = 120;
-      const verySmallH = Math.max(60, Math.round((verySmallW * srcH) / Math.max(1, srcW)));
-      const finalBlob = await canvasToBlob(bitmap, verySmallW, verySmallH, 0.03);
-      if (finalBlob && finalBlob.size > 0) return fileFromBlob(finalBlob, file.name);
-    } catch {}
-
-    // fallback al archivo original si no fue posible comprimir correctamente
-    return file;
-  } catch (err) {
-    // cualquier error: devolver original
-    return file;
-  }
-};
-
+    return blob;
+  };
 
   // --------------------------------------------------------------------
 
@@ -184,7 +136,11 @@ const tryCompressProgressive = async (file, targets = [500 * 1024, 300 * 1024, 1
     try {
       // 1) intentar comprimir progresivamente (targets en bytes de archivo, antes de base64).
       // Nota: base64 crece ~33% respecto a bytes del archivo, por eso tenemos targets agresivos.
-      const compressed = await tryCompressProgressive(file, [500 * 1024, 300 * 1024, 150 * 1024]);
+      const compressed = await tryCompressProgressive(file, [
+        500 * 1024,
+        300 * 1024,
+        150 * 1024,
+      ]);
 
       // 2) convertir a dataURL y medir tamaño real del base64
       const imageUrl = await fileToDataUrl(compressed);
@@ -225,14 +181,17 @@ const tryCompressProgressive = async (file, targets = [500 * 1024, 300 * 1024, 1
       };
 
       // 5) enviar
-      const res = await fetch("https://router.huggingface.co/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${import.meta.env.VITE_HF_TOKEN}`,
-        },
-        body: JSON.stringify(payload),
-      });
+      const res = await fetch(
+        "https://router.huggingface.co/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${import.meta.env.VITE_HF_TOKEN}`,
+          },
+          body: JSON.stringify(payload),
+        }
+      );
 
       if (!res.ok) {
         // si el servidor responde 413 pese a todo, lo informamos y damos alternativas
@@ -249,7 +208,8 @@ const tryCompressProgressive = async (file, targets = [500 * 1024, 300 * 1024, 1
       }
 
       const data = await res.json();
-      const textResp = data?.choices?.[0]?.message?.content ?? JSON.stringify(data);
+      const textResp =
+        data?.choices?.[0]?.message?.content ?? JSON.stringify(data);
       setResponse(textResp);
 
       // foco + anuncio
@@ -268,11 +228,11 @@ const tryCompressProgressive = async (file, targets = [500 * 1024, 300 * 1024, 1
       setLoading(false);
     }
   };
-
+console.log(response)
   return (
     <div className="bot" role="application" aria-label="Asistente mejIA">
       <header className="header" role="banner">
-        <h1>Asistente mejIASSS</h1>
+        <h1>Asistente mejIA</h1>
         <p>Sube una imagen e indica lo que quieres que analice</p>
       </header>
 
@@ -329,6 +289,7 @@ const tryCompressProgressive = async (file, targets = [500 * 1024, 300 * 1024, 1
         <br />
         {response ? "si hay" : "no hay"}
         <Audio text={response} />
+        {response}
       </div>
     </div>
   );
