@@ -577,7 +577,7 @@ export const Bot = () => {
       >
         {response ? <Audio text={response} /> : null}
         <br />
-        {response}
+        {response ? "si hay" : "no hay"}
       </div>
     </div>
   );
