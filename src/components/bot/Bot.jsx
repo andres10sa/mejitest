@@ -108,7 +108,6 @@ export const Bot = () => {
     // inicio (mantener compatibilidad con tu flujo)
     setResponse("");
     setLoading(true);
-    announce("Enviando imagen a la IA. Espere por favor.");
 
     try {
       // 1) intentar comprimir progresivamente (targets en bytes de archivo, antes de base64).
@@ -190,7 +189,6 @@ export const Bot = () => {
         try {
           if (responseRef.current) responseRef.current.focus();
         } catch {}
-        announce("Respuesta recibida.");
       }, 80);
     } catch (err) {
       console.error("Error envío/compresión:", err);
@@ -229,7 +227,7 @@ console.log(response)
             disabled={!file}
             className="button"
             type="submit"
-            aria-label={loading ? "Enviando a la IA" : "Analizar imagen"}
+            aria-label={loading ? "Analizando..." : "Analizar imagen"}
           >
             {loading ? "Analizando..." : "Analizar"}
           </button>
@@ -255,10 +253,7 @@ console.log(response)
         ref={responseRef}
       >
         {response ? <Audio text={response} /> : null}
-
-        {response}
       </div>
-      bebe
     </div>
   );
 };
