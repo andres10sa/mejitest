@@ -222,16 +222,16 @@ console.log(response)
             setFile={setFile}
             aria-label="Subir imagen"
           />
-          <button
-            ref={submitBtnRef}
-            disabled={!file}
-            className="button"
-            type="submit"
-            aria-label={loading ? "Analizando..." : "Analizar imagen"}
-          >
-            {loading ? "Analizando..." : "Analizar"}
-          </button>
         </div>
+        <button
+          ref={submitBtnRef}
+          disabled={!file}
+          className="button"
+          type="submit"
+          aria-label={loading ? "Analizando..." : "Analizar imagen"}
+        >
+          {loading ? "Analizando..." : "Analizar"}
+        </button>
       </form>
       <div
         aria-live="polite"
